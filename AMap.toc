@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: AMap
+## Notes: Movable zoomable world map with coordinates, waypoints with an arrow, and a tidier minimap
+## Version: 0.1.0
+## Category: Map
+## IconTexture: Interface\Icons\INV_Misc_Map_01
+## Dependencies: ACore
+## SavedVariables: AMapDB
+
+Core.lua
+Zones.lua
+WorldMap.lua
+Waypoint.lua
+Minimap.lua

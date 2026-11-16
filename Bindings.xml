@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="AMAP_CLEARWAY" header="AMAP" category="ADDONS">
+		AMap.ClearWaypoint()
+	</Binding>
+</Bindings>
