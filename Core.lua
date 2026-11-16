@@ -17,11 +17,6 @@ local defaults = {
 		send = false,
 		follow = false,
 	},
-	way = {
-		arrow = true,
-		arrive = true,
-		arrowDb = { scale = 1, locked = false, default = { "CENTER", "CENTER", 0, 190 } },
-	},
 	minimap = {
 		square = false,
 		hideZoom = true,
@@ -36,7 +31,7 @@ local defaults = {
 	},
 }
 
-ACore.New(ADDON, ns, { db = "AMapDB", defaults = defaults })
+ACore.New(ADDON, ns, { db = "AMapDB", defaults = defaults, profile = true })
 
 local queue = {}
 function ns.Safe(fn)
@@ -91,11 +86,6 @@ function ns.Options()
 			db.map.scale = nil
 			ns:Fire("LAYOUT_RESET")
 		end },
-		{ text = "Waypoint", title = true },
-		UI.Check(db.way, "arrow", "Direction arrow", changed),
-		UI.Check(db.way, "arrive", "Clear on arrival", changed),
-		UI.Check(db.way.arrowDb, "locked", "Lock the arrow", changed),
-		{ text = "Clear waypoint", func = function() AMap.ClearWaypoint() end },
 		{ text = "Minimap", title = true },
 		UI.Check(db.minimap, "square", "Square shape", changed),
 		UI.Check(db.minimap, "hideZoom", "Hide zoom buttons", changed),
@@ -125,9 +115,10 @@ end
 
 ACore.Register({
 	name = "AMap",
+	options = function() return ns.Options() end,
 	title = "AMap",
 	slash = "/amap",
-	desc = "map, waypoints and minimap",
+	desc = "map and minimap",
 	toggle = function()
 		if ACoreMinimapButton and ACoreMinimapButton:IsShown() then
 			ns.OpenOptions(ACoreMinimapButton)
@@ -145,24 +136,30 @@ SlashCmdList["AMAP"] = function(msg)
 		ns.db.map.scale = nil
 		ns.db.minimap.pos = nil
 		ns.db.minimap.scale = 1
-		ns.db.way.arrowDb.pos = nil
 		ns:Fire("LAYOUT_RESET")
 		ns:Fire("OPTIONS")
 	elseif cmd == "unlock" then
 		ns.db.minimap.locked = false
-		ns.db.way.arrowDb.locked = false
 		ns:Fire("OPTIONS")
-		ns.Print("minimap and arrow unlocked, drag to move")
+		ns.Print("minimap unlocked, drag to move")
 	elseif cmd == "lock" then
 		ns.db.minimap.locked = true
-		ns.db.way.arrowDb.locked = true
 		ns:Fire("OPTIONS")
-	elseif cmd == "clear" then
-		AMap.ClearWaypoint()
 	else
 		ns.OpenOptions(Minimap)
 	end
 end
 
-BINDING_HEADER_AMAP = "AMap"
-BINDING_NAME_AMAP_CLEARWAY = "Clear waypoint"
+function AMap.SetWaypoint(map, x, y, title)
+	if AWay and AWay.Add then return AWay.Add(map, x, y, title) and true or false end
+	return false
+end
+
+function AMap.ClearWaypoint()
+	if AWay and AWay.Clear then AWay.Clear() end
+end
+
+function AMap.GetWaypoint()
+	if AWay and AWay.Get then return AWay.Get() end
+	return nil
+end

@@ -396,8 +396,7 @@ function Map.Click(button)
 	local map = ns.MapID()
 	if not x or not map then return false end
 	if button == "LeftButton" and IsControlKeyDown() then
-		AMap.SetWaypoint(map, x, y)
-		return true
+		return AMap.SetWaypoint(map, x, y)
 	end
 	if button == "LeftButton" and IsAltKeyDown() and ns.db.map.send then
 		local text = ns.MapName(map) .. " " .. ns.Coord(x) .. ", " .. ns.Coord(y)
