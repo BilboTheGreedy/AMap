@@ -8,15 +8,18 @@ ns.Mini = Mini
 local info, border, handle
 local hooked = {}
 local hiddenSet = {}
+local placed, anchorHooked
 
 local GROUPS = {
 	hideZoom = { "MinimapZoomIn", "MinimapZoomOut", "Minimap.ZoomIn", "Minimap.ZoomOut" },
 	hideMapButton = { "MiniMapWorldMapButton" },
 	hideClock = { "TimeManagerClockButton", "GameTimeFrame" },
+	hideMail = { "MiniMapMailFrame", "MinimapCluster.IndicatorFrame" },
 	hideTracking = { "MiniMapTracking", "MiniMapTrackingFrame", "MinimapCluster.Tracking" },
 }
 
-local ROUND_ART = { "MinimapBorder", "MinimapBorderTop", "MinimapCompassTexture", "MinimapNorthTag", "MinimapCluster.BorderTop" }
+local ROUND_ART = { "MinimapBorder", "MinimapBorderTop", "MinimapCompassTexture", "MinimapCompassTextureUnderlay", "MinimapNorthTag", "MinimapCluster.BorderTop" }
+local SQUARE = "Interface\\Buttons\\WHITE8X8"
 
 local function resolve(path)
 	local obj = _G
@@ -55,21 +58,43 @@ function Mini.Zoom(delta)
 	return target
 end
 
+local function square()
+	if Minimap.SetMaskTexture then Minimap:SetMaskTexture(SQUARE) end
+	for _, path in ipairs(ROUND_ART) do setHidden(path, true) end
+end
+
+local function round()
+	for _, path in ipairs(ROUND_ART) do setHidden(path, false) end
+	local c = MinimapCluster
+	if type(c) == "table" and type(c.UpdateMinimapConfig) == "function" and pcall(c.UpdateMinimapConfig, c) then return end
+	if Minimap.SetMaskTexture then Minimap:SetMaskTexture("Textures\\MinimapMask") end
+end
+
 local function cluster()
 	return MinimapCluster or Minimap
 end
 
 local function applyPlacement()
 	local db = ns.db.minimap
+	local scale = ns.Num(db.scale) or 1
+	local moved = db.pos and db.pos[1] and true or false
+	if not moved and not placed and math.abs(scale - 1) < 0.005 then return true end
 	return ns.Safe(function()
 		local c = cluster()
-		c:SetScale(db.scale or 1)
-		if db.pos and db.pos[1] then
+		placed = true
+		c:SetScale(scale)
+		if moved then
 			c:SetMovable(true)
 			c:ClearAllPoints()
 			c:SetPoint(db.pos[1], UIParent, db.pos[2] or db.pos[1], db.pos[3] or 0, db.pos[4] or 0)
 		end
-	end)
+		if not anchorHooked and hooksecurefunc and c.ApplySystemAnchor then
+			anchorHooked = true
+			pcall(hooksecurefunc, c, "ApplySystemAnchor", function()
+				if ns.db.minimap.pos then applyPlacement() end
+			end)
+		end
+	end, "minimap")
 end
 
 local function build()
@@ -90,6 +115,7 @@ local function build()
 	handle = CreateFrame("Button", nil, Minimap)
 	handle:SetAllPoints(Minimap)
 	handle:SetFrameStrata("HIGH")
+	ns.Level(handle, Minimap, 40)
 	UI.Fill(handle, { 1, 0.82, 0, 0.18 })
 	handle.label = UI.Text(handle, "GameFontNormalSmall", "CENTER", C.accent)
 	handle.label:SetPoint("CENTER")
@@ -109,16 +135,22 @@ local function build()
 		c:StopMovingOrSizing()
 		local point, _, rel, x, y = c:GetPoint(1)
 		if point then ns.db.minimap.pos = { point, rel or point, x or 0, y or 0 } end
+		placed = true
 	end)
 	handle:Hide()
 
-	Minimap:EnableMouseWheel(true)
+	local c = MinimapCluster
+	if hooksecurefunc and type(c) == "table" and type(c.UpdateMinimapConfig) == "function" then
+		pcall(hooksecurefunc, c, "UpdateMinimapConfig", function()
+			if ns.db.minimap.square then square() end
+		end)
+	end
+
 	local function wheel(_, delta)
 		if ns.db.minimap.wheel then Mini.Zoom(delta) end
 	end
-	if Minimap:GetScript("OnMouseWheel") and Minimap.HookScript then
-		Minimap:HookScript("OnMouseWheel", wheel)
-	else
+	if not Minimap:GetScript("OnMouseWheel") then
+		Minimap:EnableMouseWheel(true)
 		Minimap:SetScript("OnMouseWheel", wheel)
 	end
 end
@@ -135,13 +167,11 @@ function Mini.Apply()
 		for _, path in ipairs(paths) do setHidden(path, db[key]) end
 	end
 	if db.square then
-		if Minimap.SetMaskTexture then Minimap:SetMaskTexture("Interface\\Buttons\\WHITE8X8") end
-		for _, path in ipairs(ROUND_ART) do setHidden(path, true) end
+		square()
 		border:Show()
 		Mini.squared = true
 	elseif Mini.squared then
-		if Minimap.SetMaskTexture then Minimap:SetMaskTexture("Textures\\MinimapMask") end
-		for _, path in ipairs(ROUND_ART) do setHidden(path, false) end
+		round()
 		border:Hide()
 		Mini.squared = nil
 	end
@@ -166,8 +196,8 @@ function Mini.Update()
 	end
 	if db.zone then
 		local text = GetMinimapZoneText and GetMinimapZoneText() or ""
-		if ns.IsSecret(text) then text = "" end
-		info.zone:SetText(text or "")
+		if ns.IsSecret(text) or type(text) ~= "string" then text = "" end
+		info.zone:SetText(text)
 	end
 end
 
@@ -190,12 +220,17 @@ end)
 ns:Listen("OPTIONS", Mini.Apply)
 
 ns:Listen("LAYOUT_RESET", function()
+	if not placed then return end
 	ns.Safe(function()
 		local c = cluster()
 		c:SetScale(1)
 		if c ~= Minimap then
 			c:ClearAllPoints()
-			c:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+			if c.ApplySystemAnchor then
+				pcall(c.ApplySystemAnchor, c)
+			else
+				c:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", 0, 0)
+			end
 		end
-	end)
+	end, "minimapReset")
 end)

@@ -23,6 +23,7 @@ local defaults = {
 		hideClock = false,
 		hideTracking = false,
 		hideMapButton = true,
+		hideMail = false,
 		wheel = true,
 		coords = true,
 		zone = false,
@@ -33,10 +34,20 @@ local defaults = {
 
 ACore.New(ADDON, ns, { db = "AMapDB", defaults = defaults, profile = true })
 
+ns:Listen("READY", function()
+	ns.db.way = nil
+end)
+
 local queue = {}
-function ns.Safe(fn)
+function ns.Safe(fn, key)
 	if InCombatLockdown and InCombatLockdown() then
-		queue[#queue + 1] = fn
+		for i = 1, #queue do
+			if key and queue[i].key == key then
+				queue[i].fn = fn
+				return false
+			end
+		end
+		queue[#queue + 1] = { fn = fn, key = key }
 		return false
 	end
 	fn()
@@ -46,8 +57,13 @@ end
 ns:On("PLAYER_REGEN_ENABLED", function()
 	local q = queue
 	queue = {}
-	for i = 1, #q do q[i]() end
+	for i = 1, #q do q[i].fn() end
 end)
+
+function ns.Level(frame, parent, add)
+	local base = parent and parent.GetFrameLevel and ns.Num(parent:GetFrameLevel()) or 0
+	frame:SetFrameLevel(math.min(9500, base + add))
+end
 
 function ns.Queued()
 	return #queue
@@ -92,6 +108,7 @@ function ns.Options()
 		UI.Check(db.minimap, "hideMapButton", "Hide world map button", changed),
 		UI.Check(db.minimap, "hideClock", "Hide clock and calendar", changed),
 		UI.Check(db.minimap, "hideTracking", "Hide tracking button", changed),
+		UI.Check(db.minimap, "hideMail", "Hide mail icon", changed),
 		UI.Check(db.minimap, "wheel", "Mouse wheel zoom", changed),
 		UI.Check(db.minimap, "coords", "Coordinates below", changed),
 		UI.Check(db.minimap, "zone", "Zone name below", changed),

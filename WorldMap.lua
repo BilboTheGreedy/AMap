@@ -9,6 +9,8 @@ local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMaskSmall"
 local bar, grip, arrow
 local dots = {}
 local following
+local extended = setmetatable({}, { __mode = "k" })
+local windowed
 
 local function scroll()
 	return WorldMapFrame and WorldMapFrame.ScrollContainer
@@ -23,21 +25,21 @@ end
 
 function ns.MapID()
 	if WorldMapFrame and WorldMapFrame.GetMapID then
-		local map = WorldMapFrame:GetMapID()
-		if type(map) == "number" then return map end
+		local ok, map = pcall(WorldMapFrame.GetMapID, WorldMapFrame)
+		return ok and ns.Num(map) or nil
 	end
 end
 
 function ns.PlayerMap()
 	if not C_Map or not C_Map.GetBestMapForUnit then return nil end
 	local ok, map = pcall(C_Map.GetBestMapForUnit, "player")
-	if ok and type(map) == "number" then return map end
+	return ok and ns.Num(map) or nil
 end
 
 function ns.UnitPos(map, unit)
 	if not map or not C_Map or not C_Map.GetPlayerMapPosition then return nil end
 	local ok, pos = pcall(C_Map.GetPlayerMapPosition, map, unit)
-	if not ok or not pos then return nil end
+	if not ok or ns.IsSecret(pos) or type(pos) ~= "table" then return nil end
 	local x, y = pos.x, pos.y
 	if pos.GetXY then x, y = pos:GetXY() end
 	x, y = ns.Num(x), ns.Num(y)
@@ -48,9 +50,9 @@ end
 function ns.Place(frame, x, y, mult)
 	local c = ns.Canvas()
 	if not c then return end
-	local scale = c:GetEffectiveScale() or 1
+	local scale = ns.Num(c:GetEffectiveScale()) or 1
 	if scale <= 0 then scale = 1 end
-	local pinScale = (UIParent:GetEffectiveScale() or 1) * (mult or 1) / scale
+	local pinScale = (ns.Num(UIParent:GetEffectiveScale()) or 1) * (mult or 1) / scale
 	frame:SetScale(pinScale)
 	frame:ClearAllPoints()
 	frame:SetPoint("CENTER", c, "TOPLEFT", x * c:GetWidth() / pinScale, -y * c:GetHeight() / pinScale)
@@ -75,7 +77,7 @@ function Map.ExtendZoom()
 	local s = scroll()
 	if not s or not ns.db.map.zoom then return false end
 	local levels = s.zoomLevels
-	if type(levels) ~= "table" or #levels == 0 or levels.amap then return false end
+	if type(levels) ~= "table" or #levels == 0 or extended[levels] then return false end
 	local last = levels[#levels]
 	if type(last) ~= "table" or type(last.scale) ~= "number" then return false end
 	local scale = last.scale
@@ -83,7 +85,7 @@ function Map.ExtendZoom()
 		scale = scale * 1.6
 		levels[#levels + 1] = { scale = scale, layerIndex = last.layerIndex }
 	end
-	levels.amap = true
+	extended[levels] = true
 	return true
 end
 
@@ -92,8 +94,20 @@ local function applyWindow()
 	if not WorldMapFrame then return end
 	if not db.window then
 		if grip then grip:Hide() end
+		if windowed then
+			windowed = nil
+			ns.Safe(function()
+				local black = WorldMapFrame.BlackoutFrame
+				if black then
+					black:SetAlpha(1)
+					black:EnableMouse(true)
+				end
+				WorldMapFrame:SetScale(1)
+			end, "window")
+		end
 		return
 	end
+	windowed = true
 	ns.Safe(function()
 		local black = WorldMapFrame.BlackoutFrame
 		if black then
@@ -109,7 +123,7 @@ local function applyWindow()
 			WorldMapFrame:SetPoint(db.pos[1], UIParent, db.pos[2] or db.pos[1], db.pos[3] or 0, db.pos[4] or 0)
 		end
 		if grip then grip:Show() end
-	end)
+	end, "window")
 end
 
 local function savePos()
@@ -120,16 +134,42 @@ end
 function Map.SetScale(scale)
 	scale = math.max(0.4, math.min(1.5, scale))
 	ns.db.map.scale = scale
-	ns.Safe(function() WorldMapFrame:SetScale(scale) end)
+	ns.Safe(function() WorldMapFrame:SetScale(scale) end, "scale")
 	return scale
 end
 
-local function jumpMenu(anchor)
-	if not C_Map or not C_Map.GetMapChildrenInfo then return end
-	local zoneType = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
+local function byName(a, b)
+	return tostring(a.name) < tostring(b.name)
+end
+
+function Map.Continents()
+	if not C_Map or not C_Map.GetMapChildrenInfo then return nil end
 	local continentType = Enum and Enum.UIMapType and Enum.UIMapType.Continent or 2
-	local ok, continents = pcall(C_Map.GetMapChildrenInfo, 947, continentType, true)
-	if not ok or type(continents) ~= "table" then return end
+	local top = ns.PlayerMap() or ns.MapID()
+	for _ = 1, 12 do
+		local info = ns.MapInfo(top)
+		local parent = info and ns.Num(info.parentMapID)
+		if not parent or parent <= 0 then break end
+		top = parent
+	end
+	local seen = {}
+	for _, id in ipairs({ top or false, 947, 946 }) do
+		if id and not seen[id] then
+			seen[id] = true
+			local ok, list = pcall(C_Map.GetMapChildrenInfo, id, continentType, true)
+			if ok and type(list) == "table" and #list > 0 then
+				table.sort(list, byName)
+				return list
+			end
+		end
+	end
+	return nil
+end
+
+local function jumpMenu(anchor)
+	local zoneType = Enum and Enum.UIMapType and Enum.UIMapType.Zone or 3
+	local continents = Map.Continents()
+	if not continents then return end
 	local entries = { { text = "Jump to", title = true } }
 	local pm = ns.PlayerMap()
 	if pm then
@@ -142,7 +182,7 @@ local function jumpMenu(anchor)
 				local ok2, zones = pcall(C_Map.GetMapChildrenInfo, cont.mapID, zoneType, false)
 				local list = { { text = cont.name, title = true }, { text = "Whole continent", func = function() Map.Go(cont.mapID) end } }
 				if ok2 and type(zones) == "table" then
-					table.sort(zones, function(a, b) return a.name < b.name end)
+					table.sort(zones, byName)
 					for _, z in ipairs(zones) do
 						local info = ns.ZoneInfo(z.mapID)
 						list[#list + 1] = {
@@ -185,6 +225,7 @@ local function build()
 	bar:SetPoint("TOPRIGHT", parent, "TOPRIGHT", 0, 0)
 	bar:SetHeight(22)
 	bar:SetFrameStrata("HIGH")
+	ns.Level(bar, WorldMapFrame, 3000)
 	bar:EnableMouse(true)
 	bar:RegisterForDrag("LeftButton")
 	UI.Fill(bar, { 0.06, 0.065, 0.08, 0.8 })
@@ -226,6 +267,7 @@ local function build()
 	grip:SetSize(16, 16)
 	grip:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
 	grip:SetFrameStrata("HIGH")
+	ns.Level(grip, WorldMapFrame, 3000)
 	grip.tex = grip:CreateTexture(nil, "OVERLAY")
 	grip.tex:SetAllPoints(grip)
 	grip.tex:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
@@ -242,6 +284,10 @@ local function build()
 		self.startScale = WorldMapFrame:GetScale() or 1
 		self.width = math.max(200, (WorldMapFrame:GetWidth() or 800) * (WorldMapFrame:GetEffectiveScale() or 1))
 		self:SetScript("OnUpdate", function(g)
+			if InCombatLockdown and InCombatLockdown() then
+				g:SetScript("OnUpdate", nil)
+				return
+			end
 			local cx = GetCursorPosition()
 			Map.SetScale(g.startScale * (1 + (cx - g.startX) / g.width))
 		end)
@@ -253,6 +299,7 @@ local function build()
 	arrow = CreateFrame("Frame", nil, c or WorldMapFrame)
 	arrow:SetSize(32, 32)
 	arrow:SetFrameStrata("HIGH")
+	ns.Level(arrow, c or WorldMapFrame, 2400)
 	arrow.tex = arrow:CreateTexture(nil, "OVERLAY")
 	arrow.tex:SetAllPoints(arrow)
 	arrow.tex:SetTexture("Interface\\Minimap\\MinimapArrow")
@@ -262,9 +309,11 @@ end
 local function dot(i)
 	local d = dots[i]
 	if d then return d end
-	d = CreateFrame("Frame", nil, ns.Canvas() or WorldMapFrame)
+	local parent = ns.Canvas() or WorldMapFrame
+	d = CreateFrame("Frame", nil, parent)
 	d:SetSize(10, 10)
 	d:SetFrameStrata("HIGH")
+	ns.Level(d, parent, 2300)
 	d.back = d:CreateTexture(nil, "BACKGROUND")
 	d.back:SetTexture(CIRCLE)
 	d.back:SetVertexColor(0, 0, 0, 0.9)
@@ -306,6 +355,7 @@ local function updateParty(map)
 				shown = shown + 1
 				local d = dot(shown)
 				local _, class = UnitClass(unit)
+				if ns.IsSecret(class) then class = nil end
 				local col = class and RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]
 				if col then
 					d.tex:SetVertexColor(col.r, col.g, col.b)
@@ -315,7 +365,7 @@ local function updateParty(map)
 					d.name:SetTextColor(1, 1, 1)
 				end
 				local name = UnitName(unit)
-				if ns.IsSecret(name) then name = nil end
+				if ns.IsSecret(name) or type(name) ~= "string" then name = nil end
 				d.name:SetText(name or "")
 				ns.Place(d, x, y, 1)
 				d:Show()
@@ -381,10 +431,10 @@ function Map.Refresh()
 	local db = ns.db.map
 	local map = ns.MapID()
 	bar.title:SetText(ns.MapName(map))
-	local info, r, g, b = nil, 1, 1, 1
+	local info, r, g, b
 	if db.title and map then info, r, g, b = ns.ZoneInfo(map) end
 	bar.info:SetText(info or "")
-	bar.info:SetTextColor(r, g, b)
+	bar.info:SetTextColor(r or 1, g or 1, b or 1)
 	bar.follow:SetActive(following and true or false)
 	Map.ExtendZoom()
 	Map.alpha = nil
@@ -437,6 +487,14 @@ ns:Listen("LOGIN", function()
 	if hooksecurefunc and WorldMapFrame.OnMapChanged then
 		pcall(hooksecurefunc, WorldMapFrame, "OnMapChanged", function() Map.Refresh() end)
 	end
+	if hooksecurefunc and WorldMapFrame.SynchronizeDisplayState then
+		pcall(hooksecurefunc, WorldMapFrame, "SynchronizeDisplayState", function() applyWindow() end)
+	end
+	if hooksecurefunc and UpdateUIPanelPositions then
+		pcall(hooksecurefunc, "UpdateUIPanelPositions", function()
+			if ns.db.map.pos and WorldMapFrame:IsShown() then applyWindow() end
+		end)
+	end
 	local s = scroll()
 	if s then
 		if hooksecurefunc and s.CreateZoomLevels then
@@ -461,6 +519,6 @@ ns:Listen("LAYOUT_RESET", function()
 		WorldMapFrame:SetScale(ns.db.map.scale or 1)
 		WorldMapFrame:ClearAllPoints()
 		WorldMapFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-	end)
+	end, "reset")
 	applyWindow()
 end)

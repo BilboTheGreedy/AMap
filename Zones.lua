@@ -69,24 +69,23 @@ function ns.ZoneInfo(map)
 			r, g, b = 0.6, 0.6, 0.6
 		end
 	end
-	if z[3] then parts[#parts + 1] = z[3] end
+	if z[3] then
+		local label = z[3] == "Horde" and FACTION_HORDE or z[3] == "Alliance" and FACTION_ALLIANCE
+		parts[#parts + 1] = type(label) == "string" and label or z[3]
+	end
 	return table.concat(parts, "  "), r, g, b
 end
 
-function ns.MapName(map)
-	local info = map and C_Map and C_Map.GetMapInfo and C_Map.GetMapInfo(map)
-	return info and info.name or ""
+function ns.MapInfo(map)
+	if type(map) ~= "number" or not C_Map or not C_Map.GetMapInfo then return nil end
+	local ok, info = pcall(C_Map.GetMapInfo, map)
+	if not ok or type(info) ~= "table" then return nil end
+	return info
 end
 
-function ns.FindZone(text)
-	if not C_Map or not C_Map.GetMapInfo then return nil end
-	text = text:lower():gsub("^%s+", ""):gsub("%s+$", "")
-	if text == "" then return nil end
-	local partial
-	for map in pairs(ns.ZONES) do
-		local name = ns.MapName(map):lower()
-		if name == text then return map end
-		if name ~= "" and name:find(text, 1, true) and not partial then partial = map end
-	end
-	return partial
+function ns.MapName(map)
+	local info = ns.MapInfo(map)
+	local name = info and info.name
+	if ns.IsSecret(name) or type(name) ~= "string" then return "" end
+	return name
 end
